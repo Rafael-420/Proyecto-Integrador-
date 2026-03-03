@@ -3,7 +3,7 @@ import hashlib
 from connector import get_connection
 from registro import RegistroView
 from corte_manager import abrir_corte
-
+from admin import admin_view
 
 # -------------------------------------------------------------------
 # COMPATIBILIDAD FLET (evita: module 'flet' has no attribute 'icons')
@@ -32,9 +32,34 @@ def LoginView(page: ft.Page):
     lbl_msg = ft.Text("")
 
     # -------------------------------------------------------------
+    # ALMACENAMIENTO COMPATIBLE (Flet nuevo: shared_preferences es async)
+    # -------------------------------------------------------------
+    async def storage_set(key, value):
+        # Guarda SIEMPRE en memoria de la sesión (sync) para poder leerlo sin await en otros módulos.
+        if not hasattr(page, "_mem_store") or not isinstance(getattr(page, "_mem_store", None), dict):
+            page._mem_store = {}
+        page._mem_store[key] = value
+
+        # Flet nuevo: shared_preferences (async, típicamente strings)
+        if hasattr(page, "shared_preferences"):
+            try:
+                await page.shared_preferences.set(key, str(value))
+                return
+            except Exception:
+                # si falla, ya quedó en memoria
+                return
+
+        # Flet viejo: client_storage
+        if hasattr(page, "client_storage"):
+            try:
+                page.client_storage.set(key, value)
+            except Exception:
+                pass
+
+    # -------------------------------------------------------------
     # INICIAR SESIÓN
     # -------------------------------------------------------------
-    def login(e):
+    async def login(e):
         # Importamos aquí para evitar import circular
         from menu import menu_interactivo_view
         from punto_venta import punto_venta_view
@@ -74,6 +99,14 @@ def LoginView(page: ft.Page):
 
             id_usuario = user_row["IdUsuario"]
 
+            # 2) ¿Es admin?
+            # (Regla simple: si el NombreUsuario es "admin")
+            if str(user_row.get("NombreUsuario", "")).strip().lower() == "admin":
+                page.views.append(admin_view(page, "Administrador"))
+                page.go("/admin")
+                page.update()
+                return
+
             # 2) ¿Es empleado?
             cursor.execute(
                 "SELECT IdEmpleado, Nombre FROM empleado WHERE Usuario_IdUsuario=%s",
@@ -86,8 +119,8 @@ def LoginView(page: ft.Page):
 
                 # ✅ abrir corte usando el ID (número)
                 corte_id = abrir_corte(id_empleado)
-                page.client_storage.set("corte_id", int(corte_id))
-                page.client_storage.set("empleado", nombre_empleado)
+                await storage_set("corte_id", int(corte_id))
+                await storage_set("empleado", nombre_empleado)
 
                 page.views.append(punto_venta_view(page, nombre_empleado))
                 page.go("/pos")
@@ -140,7 +173,7 @@ def LoginView(page: ft.Page):
 
     contenido = ft.Container(
         expand=True,
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
         content=ft.Column(
             [
                 ft.Text("Corallie Bubble", size=36, weight="bold", color="#C86DD7"),
@@ -153,8 +186,8 @@ def LoginView(page: ft.Page):
                 ft.TextButton("Olvidé mi contraseña", on_click=olvidar),
             ],
             spacing=20,
-            horizontal_alignment="center",
+            horizontal_alignment=ft.MainAxisAlignment.CENTER,
         ),
     )
 
-    return ft.View("/", controls=[contenido])
+    return ft.View(route="/", controls=[contenido])

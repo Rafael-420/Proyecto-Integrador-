@@ -1,4 +1,9 @@
 import flet as ft
+
+# Compatibilidad íconos (Flet nuevo)
+if not hasattr(ft, "icons") and hasattr(ft, "Icons"):
+    ft.icons = ft.Icons
+
 from connector import get_connection
 
 # -------------------------------------------------------------------
@@ -165,7 +170,7 @@ def RegistroView(page: ft.Page, tipo: str):
     contenido = ft.Container(
         expand=True,
         bgcolor="#F9F6FB",
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.center,
         content=ft.Column(
             [
                 ft.Text("Corallie Bubble", size=26, weight="bold", color="#C86DD7"),
@@ -187,9 +192,9 @@ def RegistroView(page: ft.Page, tipo: str):
                 lbl_msg,
             ],
             spacing=15,
-            horizontal_alignment="center",
+            horizontal_alignment=ft.MainAxisAlignment.CENTER,
             width=400,
         ),
     )
 
-    return ft.View("/registro", controls=[contenido])
+    return ft.View(route="/registro", controls=[contenido])

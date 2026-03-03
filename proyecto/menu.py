@@ -1,39 +1,93 @@
 import flet as ft
 from datetime import datetime
 from connector import get_connection
+import asyncio
+import inspect
 
 # ------------------------------------------------------------
-# PARCHES COMPATIBILIDAD FLET (NO CAMBIA TU LÓGICA)
+# COMPATIBILIDAD FLET 0.81+ (sin cambiar tu lógica)
 # ------------------------------------------------------------
+# Icons: en algunas versiones es ft.icons, en otras ft.Icons
 if not hasattr(ft, "icons") and hasattr(ft, "Icons"):
     ft.icons = ft.Icons
 
+# animation: en versiones antiguas existía ft.animation
 if not hasattr(ft, "animation"):
     ft.animation = ft
 
-_original_container = ft.Container
-def SafeContainer(*args, **kwargs):
-    # Evita propiedades que cambian entre versiones
-    kwargs.pop("elevation", None)
-    kwargs.pop("shadow", None)
-    kwargs.pop("blur", None)
-    return _original_container(*args, **kwargs)
+# Alignment: evita usar ft.Alignment.CENTER (no existe en 0.81)
+ALIGN_CENTER = getattr(getattr(ft, "alignment", None), "center", None) or getattr(ft.Alignment, "CENTER", None)
+ALIGN_TOP_CENTER = getattr(getattr(ft, "alignment", None), "top_center", None) or getattr(ft.Alignment, "TOP_CENTER", None)
 
-ft.Container = SafeContainer
 
+def _icon(name: str, fallback: str):
+    """Obtiene un icono de forma compatible entre versiones (ft.icons.* o string)."""
+    try:
+        return getattr(ft.icons, name)
+    except Exception:
+        return fallback
+
+def _icon_data(name: str):
+    """Devuelve IconData si existe en ft.icons/ft.Icons; si no, None."""
+    try:
+        return getattr(ft.icons, name)
+    except Exception:
+        return None
+
+
+def _iconbtn(icon_name: str, emoji: str, **kwargs):
+    """Botón de ícono compatible.
+    - Si existe IconData: usa IconButton normal.
+    - Si NO existe IconData: usa Container clickeable con emoji (fallback universal).
+    """
+    icon_data = _icon_data(icon_name)
+    if icon_data is not None:
+        return ft.IconButton(icon=icon_data, **kwargs)
+
+    on_click = kwargs.pop("on_click", None)
+    # Algunos builds no soportan tooltip/ink en Container; lo ignoramos para evitar crash.
+    kwargs.pop("tooltip", None)
+    icon_color = kwargs.pop("icon_color", None) or kwargs.pop("color", None)
+
+    return ft.Container(
+        width=40,
+        height=40,
+        border_radius=12,
+        alignment=ALIGN_CENTER,
+        on_click=on_click,
+        content=ft.Text(emoji, size=18, color=icon_color),
+    )
+
+def _iconctrl(icon_name: str, emoji: str, size: int = 18, color=None):
+    """Icono compatible para usar dentro de rows/containers."""
+    icon_data = _icon_data(icon_name)
+    if icon_data is not None:
+        return ft.Icon(icon_data, size=size, color=color)
+    return ft.Text(emoji, size=size)
 
 # ------------------------------------------------------------
 # MENU INTERACTIVO (CLIENTE) - MÓVIL + CARRITO + HISTORIAL + ESTATUS
 # ------------------------------------------------------------
 def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = None):
+    # ---- Estilo general / tipografía (mejora de fuentes) ----
     page.bgcolor = "#FFF3E8"
     page.padding = 0
+
+    # Tipografía coherente (sin depender de fuentes externas)
+    page.theme = ft.Theme(font_family="Roboto")
+    page.theme_mode = ft.ThemeMode.LIGHT
+
+    # Jerarquía tipográfica
+    TITLE = 16
+    SUB = 12
+    BODY = 13
+    SMALL = 11
 
     cliente_id = cliente_id or 1
     MESA_FIJA = 1  # tu BD requiere NumeroMesa
 
     # ------------------------------------------------------------
-    # MENÚ FIJO (no BD) - nombres / precios para la app
+    # MENÚ FIJO (no BD)
     # ------------------------------------------------------------
     bebidas = [
         {"id": 1, "nombre": "Té Boba Fresa", "precio": 59.0, "descripcion": "Té con leche + tapioca sabor fresa.", "categoria": "Boba Tea"},
@@ -69,56 +123,11 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
 
     def snack(msg, ok=True):
         page.snack_bar = ft.SnackBar(
-            content=ft.Text(msg),
+            content=ft.Text(msg, size=BODY, color="white"),
             bgcolor=("#2ecc71" if ok else "#e74c3c"),
         )
         page.snack_bar.open = True
         page.update()
-
-    def cerrar_sesion(e=None):
-        from login import LoginView
-        page.views.clear()
-        page.views.append(LoginView(page))
-        page.go("/")
-        page.update()
-
-    def ver_perfil(e=None):
-        dlg = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Perfil"),
-            content=ft.Column(
-                tight=True,
-                controls=[
-                    ft.Row(
-                        [
-                            ft.Container(
-                                width=56,
-                                height=56,
-                                border_radius=18,
-                                bgcolor="#FFE0F0",
-                                alignment=ft.alignment.center,
-                                content=ft.Text((nombre[:1] or "U").upper(), size=22, weight="bold", color="#6C2BD9"),
-                            ),
-                            ft.Column(
-                                [
-                                    ft.Text(nombre, size=16, weight="bold"),
-                                    ft.Text("Rol: Cliente", size=12, color="#777777"),
-                                ],
-                                spacing=2,
-                            ),
-                        ],
-                        spacing=12,
-                    ),
-                    ft.Divider(),
-                    ft.Text("Opciones", weight="bold"),
-                    ft.Text("• Editar perfil (próximamente)", size=12, color="#666"),
-                    ft.Text("• Ajustes (próximamente)", size=12, color="#666"),
-                ],
-            ),
-            actions=[ft.TextButton("Cerrar", on_click=lambda ev: close_dialog(dlg))],
-        )
-        open_dialog(dlg)
-
 
     def prep_to_text(prep: dict) -> str:
         parts = []
@@ -146,10 +155,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         return str(key)
 
     def calc_total():
-        total = 0.0
-        for it in cart.values():
-            total += float(it["precio"]) * int(it["qty"])
-        return total
+        return sum(float(it["precio"]) * int(it["qty"]) for it in cart.values())
 
     # ------------------------------------------------------------
     # BD
@@ -228,7 +234,6 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         page.update()
 
     def open_dialog(dlg: ft.AlertDialog):
-        # Forma recomendada en Flet 0.28+
         if hasattr(page, "open"):
             page.open(dlg)
         else:
@@ -236,92 +241,16 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             dlg.open = True
             page.update()
 
-
-
     def fancy_chip(text: str, bgcolor: str):
         return ft.Container(
             padding=ft.padding.symmetric(horizontal=10, vertical=6),
             border_radius=999,
             bgcolor=bgcolor,
-            content=ft.Text(text, size=11, weight=ft.FontWeight.BOLD),
+            content=ft.Text(text, size=SMALL, weight=ft.FontWeight.BOLD, color="#2C2C2C"),
         )
-    
-
-    def open_drawer(e=None):
-        if getattr(page, "drawer", None) is None:
-            page.drawer = drawer
-        page.drawer.open = True
-        page.update()
-
-    drawer = ft.NavigationDrawer(
-        controls=[
-            ft.Container(height=10),
-            ft.Container(
-                padding=14,
-                border_radius=18,
-                bgcolor="#F7F2FF",
-                content=ft.Row(
-                    [
-                        ft.Container(
-                            width=46,
-                            height=46,
-                            border_radius=16,
-                            bgcolor="#C86DD7",
-                            alignment=ft.alignment.center,
-                            content=ft.Text((nombre[:1] or "U").upper(), color="white", weight="bold"),
-                        ),
-                        ft.Column(
-                            [
-                                ft.Text(nombre, weight="bold"),
-                                ft.Text("Cliente", size=12, color="#666"),
-                            ],
-                            spacing=1,
-                        ),
-                    ],
-                    spacing=12,
-                ),
-            ),
-            ft.Divider(),
-
-            ft.NavigationDrawerDestination(icon=ft.icons.RESTAURANT_MENU, label="Menú"),
-            ft.NavigationDrawerDestination(icon=ft.icons.SHOPPING_CART, label="Carrito"),
-            ft.NavigationDrawerDestination(icon=ft.icons.HISTORY, label="Historial"),
-            ft.NavigationDrawerDestination(icon=ft.icons.RECEIPT_LONG, label="Estado"),
-
-            ft.Divider(),
-            ft.ListTile(
-                leading=ft.Icon(ft.icons.PERSON),
-                title=ft.Text("Perfil"),
-                on_click=lambda e: (setattr(page.drawer, "open", False), page.update(), ver_perfil()),
-            ),
-            ft.ListTile(
-                leading=ft.Icon(ft.icons.LOGOUT),
-                title=ft.Text("Cerrar sesión"),
-                on_click=lambda e: cerrar_sesion(),
-            ),
-        ]
-    )
-
-    def on_drawer_change(e):
-        # índice 0..3 para Menú/Carrito/Historial/Estado
-        idx = e.control.selected_index
-        page.drawer.open = False
-        page.update()
-        if idx == 0:
-            set_tab("menu")
-        elif idx == 1:
-            set_tab("carrito")
-        elif idx == 2:
-            set_tab("historial")
-        elif idx == 3:
-            set_tab("estado")
-
-    drawer.on_change = on_drawer_change
-    page.drawer = drawer
-
 
     # ------------------------------------------------------------
-    # UI - TOP
+    # UI - HEADER
     # ------------------------------------------------------------
     header = ft.Container(
         padding=ft.padding.symmetric(horizontal=16, vertical=14),
@@ -330,27 +259,22 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         content=ft.Row(
             [
                 ft.Container(
-                    width=42,
-                    height=42,
+                    width=44,
+                    height=44,
                     border_radius=16,
                     bgcolor="#C86DD7",
-                    alignment=ft.alignment.center,
-                    content=ft.Text("CB", color="white", weight=ft.FontWeight.BOLD),
+                    alignment=ALIGN_CENTER,
+                    content=ft.Text("CB", color="white", weight=ft.FontWeight.BOLD, size=14),
                 ),
                 ft.Column(
                     [
-                        ft.Text("Corallie Bubble", size=16, weight=ft.FontWeight.BOLD),
-                        ft.Text(f"Hola, {nombre} 💜", size=12, color="#666"),
+                        ft.Text("Corallie Bubble", size=TITLE, weight=ft.FontWeight.BOLD, color="#2C2C2C"),
+                        ft.Text(f"Hola, {nombre}", size=SUB, color="#666"),
                     ],
                     spacing=1,
                     expand=True,
                 ),
-                ft.IconButton(
-                    icon=ft.icons.MENU,
-                    icon_color="#6C2BD9",
-                    tooltip="Menú",
-                    on_click=open_drawer,
-                ),
+                _iconbtn("SHOPPING_CART", "🛒", icon_color="#6C2BD9", tooltip="Carrito", on_click=lambda e: set_tab("carrito")),
             ],
             spacing=12,
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -358,11 +282,11 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
     )
 
     # ------------------------------------------------------------
-    # BUSCADOR + LISTAS
+    # BUSCADOR
     # ------------------------------------------------------------
     txt_search = ft.TextField(
         hint_text="Buscar bebida…",
-        prefix_icon=ft.icons.SEARCH,
+        prefix=_iconctrl("SEARCH", "🔎", size=18, color="#6C2BD9"),
         border_radius=18,
         height=46,
         bgcolor="white",
@@ -370,7 +294,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         text_size=14,
     )
 
-    # Tabs (sin categorías visibles; solo se usa internamente)
+    # Tabs containers
     tab_menu_btn = ft.Container()
     tab_carrito_btn = ft.Container()
     tab_hist_btn = ft.Container()
@@ -399,7 +323,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         page.update()
 
     # ------------------------------------------------------------
-    # CARRITO UI
+    # CARRITO
     # ------------------------------------------------------------
     def change_qty(key: str, delta: int):
         if key not in cart:
@@ -427,7 +351,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                     bgcolor="white",
                     border=ft.border.all(1, "#F0E3FF"),
                     content=ft.Row(
-                        [ft.Text("🛒", size=18), ft.Text("Tu carrito está vacío.", size=13, color="#444")],
+                        [ft.Text("🛒", size=18), ft.Text("Tu carrito está vacío.", size=BODY, color="#444")],
                         spacing=10,
                     ),
                 )
@@ -446,25 +370,23 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                         [
                             ft.Row(
                                 [
-                                    ft.Text(it["nombre"], weight=ft.FontWeight.BOLD, size=13, expand=True),
-                                    ft.Text(money(it["precio"]), size=12, color="#6C2BD9", weight=ft.FontWeight.BOLD),
+                                    ft.Text(it["nombre"], weight=ft.FontWeight.BOLD, size=BODY, expand=True, color="#2C2C2C"),
+                                    ft.Text(money(it["precio"]), size=SUB, color="#6C2BD9", weight=ft.FontWeight.BOLD),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             ),
-                            ft.Text(safe_text(prep_to_text(it.get("prep") or {}), 120), size=11, color="#666"),
+                            ft.Text(safe_text(prep_to_text(it.get("prep") or {}), 120), size=SMALL, color="#666"),
                             ft.Row(
                                 [
                                     ft.Row(
                                         [
-                                            ft.IconButton(icon=ft.icons.REMOVE, icon_size=18,
-                                                          on_click=lambda e, k=key: change_qty(k, -1)),
-                                            ft.Text(str(it["qty"]), width=24, text_align=ft.TextAlign.CENTER),
-                                            ft.IconButton(icon=ft.icons.ADD, icon_size=18,
-                                                          on_click=lambda e, k=key: change_qty(k, +1)),
+                                            _iconbtn("REMOVE", "➖", icon_size=18, on_click=lambda e, k=key: change_qty(k, -1)),
+                                            ft.Text(str(it["qty"]), width=24, text_align=ft.TextAlign.CENTER, size=BODY),
+                                            _iconbtn("ADD", "➕", icon_size=18, on_click=lambda e, k=key: change_qty(k, +1)),
                                         ],
                                         spacing=0,
                                     ),
-                                    ft.IconButton(icon=ft.icons.DELETE_OUTLINE, on_click=lambda e, k=key: remove_item(k)),
+                                    _iconbtn("DELETE_OUTLINE", "🗑️", on_click=lambda e, k=key: remove_item(k)),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             ),
@@ -475,16 +397,13 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             )
 
     # ------------------------------------------------------------
-    # PREPARAR (VENTANA FLOTANTE CON EFECTOS)
+    # PERSONALIZACIÓN (DIALOG)
     # ------------------------------------------------------------
     def open_prepare(item: dict):
         nombre_prod = item["nombre"]
         precio_base = float(item["precio"])
         desc = item.get("descripcion", "")
 
-        # ---------------------------
-        # Personalización base
-        # ---------------------------
         dd_tamano = ft.Dropdown(
             label="Tamaño",
             value="Mediano",
@@ -507,15 +426,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             ],
         )
 
-        # Extras por bebida (puedes ajustar aquí)
-        extras = [
-            ("Boba extra", 6),
-            ("Jelly", 6),
-            ("Popping boba", 8),
-            ("Crema", 5),
-            ("Chispas", 5),
-        ]
-
+        extras = [("Boba extra", 6), ("Jelly", 6), ("Popping boba", 8), ("Crema", 5), ("Chispas", 5)]
         cb = {t: ft.Checkbox(label=f"{t}  (+{p})", value=False) for t, p in extras}
 
         txt_notas = ft.TextField(
@@ -526,29 +437,17 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             max_lines=3,
         )
 
-        # ---------------------------
-        # Precio dinámico (según personalización)
-        # ---------------------------
-        lbl_precio = ft.Text(money(precio_base), weight=ft.FontWeight.BOLD, color="#6C2BD9")
+        lbl_precio = ft.Text(money(precio_base), weight=ft.FontWeight.BOLD, color="#6C2BD9", size=BODY)
 
         def calc_delta():
             delta = 0.0
-
-            # Ajuste por tamaño
             if dd_tamano.value == "Grande":
                 delta += 10
             elif dd_tamano.value == "Chico":
                 delta -= 5
-
-            # Ajuste por extras
             for t, p in extras:
                 if cb[t].value:
                     delta += float(p)
-
-            # Ejemplo: sin leche podría bajar un poco (opcional)
-            # if dd_leche.value == "Sin leche":
-            #     delta -= 3
-
             return delta
 
         def refresh_price(_=None):
@@ -561,10 +460,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         for t, _p in extras:
             cb[t].on_change = refresh_price
 
-        # ---------------------------
-        # Confirmar -> agrega al carrito con preparación única
-        # ---------------------------
-        def add_confirm(e):
+        def add_confirm(_e):
             prep = {
                 "tamano": dd_tamano.value,
                 "azucar": int(s_azucar.value),
@@ -575,17 +471,10 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             }
 
             precio_final = max(0.0, precio_base + calc_delta())
-
-            # clave única: si cambia preparación, no se mezcla
             key = make_cart_key(nombre_prod, prep)
 
             if key not in cart:
-                cart[key] = {
-                    "nombre": nombre_prod,
-                    "precio": float(precio_final),
-                    "qty": 1,
-                    "prep": prep
-                }
+                cart[key] = {"nombre": nombre_prod, "precio": float(precio_final), "qty": 1, "prep": prep}
             else:
                 cart[key]["qty"] += 1
 
@@ -594,9 +483,6 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             close_dialog(prepare_dlg)
             snack(f"Agregado: {nombre_prod}")
 
-        # ---------------------------
-        # UI flotante con animación
-        # ---------------------------
         anim_wrap = ft.AnimatedSwitcher(
             transition=ft.AnimatedSwitcherTransition.SCALE,
             duration=220,
@@ -610,17 +496,13 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                 content=ft.Column(
                     [
                         ft.Row([dd_tamano, dd_leche], spacing=10),
-
-                        ft.Text("Azúcar", weight=ft.FontWeight.BOLD, size=12),
+                        ft.Text("Azúcar", weight=ft.FontWeight.BOLD, size=SUB),
                         s_azucar,
-                        ft.Text("Hielo", weight=ft.FontWeight.BOLD, size=12),
+                        ft.Text("Hielo", weight=ft.FontWeight.BOLD, size=SUB),
                         s_hielo,
-
                         ft.Divider(height=10),
-
-                        ft.Text("Extras", weight=ft.FontWeight.BOLD, size=12),
+                        ft.Text("Extras", weight=ft.FontWeight.BOLD, size=SUB),
                         ft.Column([cb[t] for t, _p in extras], spacing=2),
-
                         txt_notas,
                     ],
                     spacing=10,
@@ -638,13 +520,13 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                         height=42,
                         border_radius=16,
                         bgcolor="#FFE0F0",
-                        alignment=ft.alignment.center,
+                        alignment=ALIGN_CENTER,
                         content=ft.Text("🧋", size=20),
                     ),
                     ft.Column(
                         [
-                            ft.Text(nombre_prod, weight=ft.FontWeight.BOLD),
-                            ft.Text(safe_text(desc, 90), size=12, color="#666"),
+                            ft.Text(nombre_prod, weight=ft.FontWeight.BOLD, size=BODY),
+                            ft.Text(safe_text(desc, 90), size=SUB, color="#666"),
                         ],
                         spacing=1,
                         expand=True,
@@ -663,7 +545,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                 ft.TextButton("Cancelar", on_click=lambda e: close_dialog(prepare_dlg)),
                 ft.ElevatedButton(
                     "Agregar",
-                    icon=ft.icons.ADD_SHOPPING_CART_OUTLINED if hasattr(ft.icons, "ADD_SHOPPING_CART_OUTLINED") else ft.icons.ADD_SHOPPING_CART,
+                    icon=_icon("ADD_SHOPPING_CART_OUTLINED", "add_shopping_cart"),
                     bgcolor="#C86DD7",
                     color="white",
                     on_click=add_confirm,
@@ -674,10 +556,8 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         refresh_price()
         open_dialog(prepare_dlg)
 
-
-
     # ------------------------------------------------------------
-    # MENU CARD (MÓVIL)
+    # CARD DEL MENÚ
     # ------------------------------------------------------------
     def menu_card(item):
         nombre_prod = item["nombre"]
@@ -694,19 +574,19 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                     ft.Row(
                         [
                             ft.Container(
-                                width=52,
-                                height=52,
+                                width=54,
+                                height=54,
                                 border_radius=16,
                                 bgcolor="#FFE0F0",
-                                alignment=ft.alignment.center,
+                                alignment=ALIGN_CENTER,
                                 content=ft.Text("🧋", size=22),
                             ),
                             ft.Column(
                                 [
-                                    ft.Text(nombre_prod, size=15, weight=ft.FontWeight.BOLD),
+                                    ft.Text(nombre_prod, size=15, weight=ft.FontWeight.BOLD, color="#2C2C2C"),
                                     ft.Text(
                                         safe_text(desc, 80),
-                                        size=12,
+                                        size=SUB,
                                         color="#444",
                                         max_lines=2,
                                         overflow=ft.TextOverflow.ELLIPSIS,
@@ -724,20 +604,14 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                                 border_radius=999,
                                 bgcolor="#F7F2FF",
                                 padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                                content=ft.Text(money(precio), weight=ft.FontWeight.BOLD, color="#6C2BD9"),
+                                content=ft.Text(money(precio), weight=ft.FontWeight.BOLD, color="#6C2BD9", size=BODY),
                             ),
-                            ft.Row(
-                                [
-                                    # ✅ Aquí abrimos SIEMPRE la personalización
-                                    ft.ElevatedButton(
-                                        "Personalizar",
-                                        icon=ft.icons.TUNE,
-                                        bgcolor="#C86DD7",
-                                        color="white",
-                                        on_click=lambda e, it=item: open_prepare(it),
-                                    )
-                                ],
-                                spacing=8,
+                            ft.ElevatedButton(
+                                "Personalizar",
+                                icon=_icon("TUNE", "tune"),
+                                bgcolor="#C86DD7",
+                                color="white",
+                                on_click=lambda e, it=item: open_prepare(it),
                             ),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -754,13 +628,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         q = (txt_search.value or "").strip().lower()
         menu_list.controls.clear()
 
-        filtered = []
-        for b in bebidas:
-            if not q:
-                filtered.append(b)
-                continue
-            if q in b["nombre"].lower() or q in (b.get("descripcion", "").lower()):
-                filtered.append(b)
+        filtered = [b for b in bebidas if (not q) or (q in b["nombre"].lower()) or (q in (b.get("descripcion", "").lower()))]
 
         if not filtered:
             menu_list.controls.append(
@@ -770,7 +638,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                     bgcolor="white",
                     border=ft.border.all(1, "#F0E3FF"),
                     content=ft.Row(
-                        [ft.Text("🔎", size=16), ft.Text("No encontramos bebidas.", size=13, color="#444")],
+                        [ft.Text("🔎", size=16), ft.Text("No encontramos bebidas.", size=BODY, color="#444")],
                         spacing=10,
                     ),
                 )
@@ -784,7 +652,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
     txt_search.on_change = lambda e: render_menu()
 
     # ------------------------------------------------------------
-    # ESTADO (último pedido) + HISTORIAL
+    # ESTADO + HISTORIAL
     # ------------------------------------------------------------
     def build_estado():
         estado_panel.controls.clear()
@@ -797,7 +665,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                     bgcolor="white",
                     border=ft.border.all(1, "#F0E3FF"),
                     content=ft.Row(
-                        [ft.Text("🧾", size=18), ft.Text("Aún no has realizado pedidos.", size=13, color="#444")],
+                        [ft.Text("🧾", size=18), ft.Text("Aún no has realizado pedidos.", size=BODY, color="#444")],
                         spacing=10,
                     ),
                 )
@@ -813,7 +681,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                     bgcolor="white",
                     border=ft.border.all(1, "#F0E3FF"),
                     content=ft.Row(
-                        [ft.Text("⚠️", size=18), ft.Text("No se pudo cargar el estatus.", size=13, color="#444")],
+                        [ft.Text("⚠️", size=18), ft.Text("No se pudo cargar el estatus.", size=BODY, color="#444")],
                         spacing=10,
                     ),
                 )
@@ -842,15 +710,15 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
-                        ft.Text(f"Fecha: {row.get('FechaPedido')}  Hora: {row.get('HoraPedido')}", size=12, color="#666"),
-                        ft.Text(f"Total: {money(row.get('Total') or 0)}", size=13, weight=ft.FontWeight.BOLD, color="#6C2BD9"),
+                        ft.Text(f"Fecha: {row.get('FechaPedido')}  Hora: {row.get('HoraPedido')}", size=SUB, color="#666"),
+                        ft.Text(f"Total: {money(row.get('Total') or 0)}", size=BODY, weight=ft.FontWeight.BOLD, color="#6C2BD9"),
                         ft.Divider(height=10),
-                        ft.Text("Detalle:", size=12, weight=ft.FontWeight.BOLD),
-                        ft.Text(safe_text(row.get("Producto") or "", 260), size=12, color="#444"),
+                        ft.Text("Detalle:", size=SUB, weight=ft.FontWeight.BOLD),
+                        ft.Text(safe_text(row.get("Producto") or "", 260), size=SUB, color="#444"),
                         ft.Row(
                             [
-                                ft.OutlinedButton("Actualizar", icon=ft.icons.REFRESH, on_click=lambda e: (build_estado(), page.update())),
-                                ft.ElevatedButton("Ver historial", icon=ft.icons.HISTORY, bgcolor="#C86DD7", color="white",
+                                ft.OutlinedButton("Actualizar", icon=_icon("REFRESH", "refresh"), on_click=lambda e: (build_estado(), page.update())),
+                                ft.ElevatedButton("Ver historial", icon=_icon("HISTORY", "history"), bgcolor="#C86DD7", color="white",
                                                   on_click=lambda e: set_tab("historial")),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -868,7 +736,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             modal=True,
             title=ft.Row(
                 [
-                    ft.Text(f"Pedido #{row.get('IdGenerarPedido')}", weight=ft.FontWeight.BOLD),
+                    ft.Text(f"Pedido #{row.get('IdGenerarPedido')}", weight=ft.FontWeight.BOLD, size=BODY),
                     fancy_chip(est or "—", "#F7F2FF"),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -877,10 +745,10 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                 width=520,
                 content=ft.Column(
                     [
-                        ft.Text(f"Fecha: {row.get('FechaPedido')}  Hora: {row.get('HoraPedido')}", size=12, color="#666"),
-                        ft.Text(f"Total: {money(row.get('Total') or 0)}", size=13, weight=ft.FontWeight.BOLD, color="#6C2BD9"),
+                        ft.Text(f"Fecha: {row.get('FechaPedido')}  Hora: {row.get('HoraPedido')}", size=SUB, color="#666"),
+                        ft.Text(f"Total: {money(row.get('Total') or 0)}", size=BODY, weight=ft.FontWeight.BOLD, color="#6C2BD9"),
                         ft.Divider(height=10),
-                        ft.Text(row.get("Producto") or "", size=12),
+                        ft.Text(row.get("Producto") or "", size=SUB),
                     ],
                     spacing=10,
                     tight=True,
@@ -888,9 +756,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             ),
             actions=[ft.TextButton("Cerrar", on_click=lambda e: close_dialog(dlg))],
         )
-        page.dialog = dlg
-        dlg.open = True
-        page.update()
+        open_dialog(dlg)
 
     def build_historial():
         historial_list.controls.clear()
@@ -904,7 +770,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                     bgcolor="white",
                     border=ft.border.all(1, "#F0E3FF"),
                     content=ft.Row(
-                        [ft.Text("📭", size=18), ft.Text("Sin historial por ahora.", size=13, color="#444")],
+                        [ft.Text("📭", size=18), ft.Text("Sin historial por ahora.", size=BODY, color="#444")],
                         spacing=10,
                     ),
                 )
@@ -929,15 +795,15 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                         [
                             ft.Row(
                                 [
-                                    ft.Text(f"Pedido #{r.get('IdGenerarPedido')}", weight=ft.FontWeight.BOLD, size=14, expand=True),
+                                    ft.Text(f"Pedido #{r.get('IdGenerarPedido')}", weight=ft.FontWeight.BOLD, size=BODY, expand=True),
                                     fancy_chip(est, chip_bg),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             ),
-                            ft.Text(f"{r.get('FechaPedido')}  {r.get('HoraPedido')}", size=12, color="#666"),
+                            ft.Text(f"{r.get('FechaPedido')}  {r.get('HoraPedido')}", size=SUB, color="#666"),
                             ft.Row(
                                 [
-                                    ft.Text(money(r.get("Total") or 0), weight=ft.FontWeight.BOLD, color="#6C2BD9"),
+                                    ft.Text(money(r.get("Total") or 0), weight=ft.FontWeight.BOLD, color="#6C2BD9", size=BODY),
                                     ft.TextButton("Ver detalle", on_click=lambda e, row=r: open_detalle_pedido(row)),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -949,7 +815,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             )
 
     # ------------------------------------------------------------
-    # CHECKOUT (ENVIAR PEDIDO)
+    # CHECKOUT
     # ------------------------------------------------------------
     def checkout():
         nonlocal last_pedido_id
@@ -957,9 +823,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             snack("Tu pedido está vacío.", ok=False)
             return
 
-        lineas = []
-        for it in cart.values():
-            lineas.append(f"{it['nombre']} (x{it['qty']}) [{prep_to_text(it.get('prep') or {})}]")
+        lineas = [f"{it['nombre']} (x{it['qty']}) [{prep_to_text(it.get('prep') or {})}]" for it in cart.values()]
         producto_texto = " / ".join(lineas)
         total = calc_total()
 
@@ -977,12 +841,12 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         set_tab("estado")
 
     # ------------------------------------------------------------
-    # TABS (Menu / Carrito / Historial / Estado)
+    # TABS
     # ------------------------------------------------------------
     current_tab = {"value": "menu"}
 
-    def tab_button(title: str, icon, tab_key: str):
-        def on_click(e):
+    def tab_button(title: str, icon_name: str, emoji: str, tab_key: str):
+        def on_click(_e):
             set_tab(tab_key)
 
         return ft.Container(
@@ -991,27 +855,22 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
             animate=ft.animation.Animation(180, ft.AnimationCurve.EASE_OUT),
             on_click=on_click,
             content=ft.Row(
-                [
-                    ft.Icon(icon, size=18),
-                    ft.Text(title, size=12, weight=ft.FontWeight.BOLD),
-                ],
+                [ _iconctrl(icon_name, emoji, size=18, color="#6C2BD9"), ft.Text(title, size=SUB, weight=ft.FontWeight.BOLD)],
                 spacing=6,
                 tight=True,
             ),
         )
 
-    tab_menu_btn.content = tab_button("Menú", ft.icons.RESTAURANT_MENU, "menu")
-    tab_carrito_btn.content = tab_button("Carrito", ft.icons.SHOPPING_CART, "carrito")
-    tab_hist_btn.content = tab_button("Historial", ft.icons.HISTORY, "historial")
-    tab_estado_btn.content = tab_button("Estado", ft.icons.RECEIPT_LONG, "estado")
+    tab_menu_btn.content = tab_button("Menú", "MENU_BOOK", "📋", "menu")
+    tab_carrito_btn.content = tab_button("Carrito", "SHOPPING_CART", "🛒", "carrito")
+    tab_hist_btn.content = tab_button("Historial", "HISTORY", "🕘", "historial")
+    tab_estado_btn.content = tab_button("Estado", "RECEIPT_LONG", "🧾", "estado")
 
     def paint_tabs():
         def style(btn_container: ft.Container, active: bool):
-            # el botón real está dentro: btn_container.content (otro Container)
             b = btn_container.content
             b.bgcolor = "#C86DD7" if active else "white"
             b.border = ft.border.all(1, "#C86DD7" if active else "#F0E3FF")
-            # Icon y texto
             row = b.content
             row.controls[0].color = "white" if active else "#6C2BD9"
             row.controls[1].color = "white" if active else "#2C2C2C"
@@ -1040,32 +899,36 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         page.update()
 
     # ------------------------------------------------------------
-    # AUTO-REFRESH ESTADO (cada 3s si estás en "Estado")
+    # AUTO-REFRESH ESTADO (cada 3s)
     # ------------------------------------------------------------
-    def on_tick(e):
-        if current_tab["value"] == "estado" and last_pedido_id:
-            build_estado()
-            page.update()
-
-    import asyncio
-
     async def _estado_poller():
         while True:
-            try:
-                await asyncio.sleep(3)
-                if current_tab["value"] == "estado" and last_pedido_id:
+            await asyncio.sleep(3)
+            if current_tab["value"] == "estado" and last_pedido_id:
+                try:
                     build_estado()
                     page.update()
-            except Exception:
-                # Si algo falla, no rompemos la app
-                await asyncio.sleep(3)
+                except Exception:
+                    pass
 
-    # Si tu Flet soporta run_task, activamos el auto-refresh
-    if hasattr(page, "run_task"):
-        page.run_task(_estado_poller)
+    def start_poller():
+        if not hasattr(page, "run_task"):
+            return
+        try:
+            if inspect.iscoroutinefunction(_estado_poller):
+                try:
+                    page.run_task(_estado_poller)
+                except TypeError:
+                    page.run_task(_estado_poller())
+            else:
+                page.run_task(_estado_poller())
+        except Exception:
+            pass
+
+    start_poller()
 
     # ------------------------------------------------------------
-    # BARRA INFERIOR (MÓVIL) - total + enviar
+    # BARRA INFERIOR
     # ------------------------------------------------------------
     bottom_bar = ft.Container(
         padding=ft.padding.symmetric(horizontal=14, vertical=12),
@@ -1073,17 +936,9 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         border=ft.border.only(top=ft.border.BorderSide(1, "#F0E3FF")),
         content=ft.Row(
             [
-                ft.Column(
-                    [
-                        ft.Text("Tu pedido", size=12, color="#666"),
-                        lbl_total,
-                    ],
-                    spacing=2,
-                    expand=True,
-                ),
+                ft.Column([ft.Text("Tu pedido", size=SUB, color="#666"), lbl_total], spacing=2, expand=True),
                 ft.ElevatedButton(
                     "Enviar",
-                    icon=ft.icons.DONE_ALL,
                     bgcolor="#C86DD7",
                     color="white",
                     on_click=lambda e: checkout(),
@@ -1094,7 +949,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
     )
 
     # ------------------------------------------------------------
-    # LAYOUT MÓVIL (centrado para PC sin “cortes”)
+    # LAYOUT (marco móvil)
     # ------------------------------------------------------------
     tabs_row = ft.Row(
         [tab_menu_btn, tab_carrito_btn, tab_hist_btn, tab_estado_btn],
@@ -1103,10 +958,10 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
     )
 
     mobile_frame = ft.Container(
-        alignment=ft.alignment.top_center,
+        alignment=ALIGN_TOP_CENTER,
         expand=True,
         content=ft.Container(
-            width=520,  # marco tipo móvil
+            width=520,
             expand=True,
             padding=ft.padding.symmetric(horizontal=14, vertical=14),
             content=ft.Column(
@@ -1123,15 +978,7 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
         ),
     )
 
-    root = ft.Column(
-        [
-            header,
-            mobile_frame,
-            bottom_bar,
-        ],
-        spacing=0,
-        expand=True,
-    )
+    root = ft.Column([header, mobile_frame, bottom_bar], spacing=0, expand=True)
 
     # Inicial
     render_menu()
@@ -1139,4 +986,4 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
     refresh_total_ui()
     set_tab("menu")
 
-    return ft.View("/menu", controls=[root])
+    return ft.View(route="/menu", controls=[root])

@@ -1,24 +1,11 @@
 import flet as ft
-from datetime import date
-from connector import get_connection
 
-
-# ------------------------------------------------------------
-# PARCHES COMPATIBILIDAD FLET
-# ------------------------------------------------------------
+# Compatibilidad íconos (Flet nuevo)
 if not hasattr(ft, "icons") and hasattr(ft, "Icons"):
     ft.icons = ft.Icons
 
-if not hasattr(ft, "animation"):
-    ft.animation = ft
-
-_original_container = ft.Container
-def SafeContainer(*args, **kwargs):
-    kwargs.pop("elevation", None)
-    kwargs.pop("shadow", None)
-    kwargs.pop("blur", None)
-    return _original_container(*args, **kwargs)
-ft.Container = SafeContainer
+from datetime import date
+from connector import get_connection
 
 
 def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
@@ -35,31 +22,6 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
         page.views.clear()
         page.views.append(LoginView(page))
         page.go("/")
-        page.update()
-
-    def ir_inicio(e=None):
-        volver_pos()
-
-    def ir_inventario(e=None):
-        from inventario import inventario_view
-        page.views.append(inventario_view(page, nombre))
-        page.go("/inventario")
-        page.update()
-
-    def ir_movimientos(e=None):
-        page.go("/movimientos")
-        page.update()
-
-    def ir_caja_chica(e=None):
-        from caja_chica import caja_chica_view
-        page.views.append(caja_chica_view(page, nombre))
-        page.go("/caja_chica")
-        page.update()
-
-    def ir_reportes(e=None):
-        from generar_reportes import generar_reportes_view
-        page.views.append(generar_reportes_view(page, nombre))
-        page.go("/reportes")
         page.update()
 
     # -----------------------------
@@ -81,6 +43,43 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
             page.snack_bar = sb
             sb.open = True
             page.update()
+
+    # -----------------------------
+    # Sidebar (igual estilo)
+    # -----------------------------
+    def crear_boton_sidebar(texto: str, on_click):
+        btn = ft.Container(
+            padding=ft.padding.symmetric(vertical=10, horizontal=16),
+            border_radius=20,
+            content=ft.Text(texto, color="white", size=14, weight="w600"),
+            ink=True,
+            on_click=on_click,
+        )
+
+        def on_hover(e):
+            btn.bgcolor = "rgba(255,255,255,0.18)" if e.data == "true" else None
+            btn.update()
+
+        btn.on_hover = on_hover
+        return btn
+
+    sidebar = ft.Container(
+        width=220,
+        bgcolor="#C86DD7",
+        padding=20,
+        content=ft.Column(
+            [
+                ft.Text("Corallie Bubble", size=20, weight="bold", color="white"),
+                ft.Text("Punto de Venta", size=12, color="white70"),
+                ft.Container(height=20),
+                crear_boton_sidebar("Inicio", volver_pos),
+                crear_boton_sidebar("Entradas y salidas", lambda e: None),
+                ft.Container(expand=True),
+                crear_boton_sidebar("Cerrar sesión", cerrar_sesion),
+            ],
+            spacing=6,
+        ),
+    )
 
     # -----------------------------
     # BD
@@ -105,7 +104,7 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
                     cur.close()
                 if conn:
                     conn.close()
-            except Exception:
+            except:
                 pass
 
     def db_listar_movimientos(limit=100):
@@ -144,7 +143,7 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
                     cur.close()
                 if conn:
                     conn.close()
-            except Exception:
+            except:
                 pass
 
     def db_registrar_movimiento(tipo: str, id_prod: int, nombre_prod: str, cantidad: float, descripcion: str):
@@ -210,11 +209,11 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
             conn.commit()
             return nuevo_stock
 
-        except Exception:
+        except:
             try:
                 if conn:
                     conn.rollback()
-            except Exception:
+            except:
                 pass
             raise
         finally:
@@ -223,26 +222,24 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
                     cur.close()
                 if conn:
                     conn.close()
-            except Exception:
+            except:
                 pass
 
     # -----------------------------
     # UI Formulario
     # -----------------------------
     productos = db_listar_productosstock()
-
-    def build_dropdown_options():
-        return [
-            ft.dropdown.Option(
-                key=str(p["IdProductosStock"]),
-                text=f'{p["Nombre"]} (Stock: {p["Cantidad"]})',
-            )
-            for p in productos
-        ]
+    opciones = [
+        ft.dropdown.Option(
+            key=str(p["IdProductosStock"]),
+            text=f'{p["Nombre"]} (Stock: {p["Cantidad"]})',
+        )
+        for p in productos
+    ]
 
     dd_producto = ft.Dropdown(
         label="Producto",
-        options=build_dropdown_options(),
+        options=opciones,
         border_radius=12,
         width=420,
     )
@@ -295,7 +292,7 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
             parts = (texto or "").split("|", 2)
             if len(parts) == 3:
                 return parts[0].strip(), parts[1].strip(), parts[2].strip()
-        except Exception:
+        except:
             pass
         return "", "Desconocido", (texto or "")
 
@@ -303,7 +300,7 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
         movimientos = db_listar_movimientos(limit=150)
         tabla.rows = []
         for m in movimientos:
-            _pid, pnom, desc = parse_texto(m.get("Texto"))
+            pid, pnom, desc = parse_texto(m.get("Texto"))
             tabla.rows.append(
                 ft.DataRow(
                     cells=[
@@ -320,7 +317,13 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
     def recargar_dropdown_productos():
         nonlocal productos
         productos = db_listar_productosstock()
-        dd_producto.options = build_dropdown_options()
+        dd_producto.options = [
+            ft.dropdown.Option(
+                key=str(p["IdProductosStock"]),
+                text=f'{p["Nombre"]} (Stock: {p["Cantidad"]})',
+            )
+            for p in productos
+        ]
         page.update()
 
     def validar_form():
@@ -336,7 +339,7 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
         c_raw = (txt_cantidad.value or "").strip()
         try:
             c = float(c_raw)
-        except Exception:
+        except:
             c = -1
 
         if c <= 0:
@@ -359,7 +362,7 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
         tipo = dd_tipo.value
         id_prod = int(dd_producto.value)
 
-        # tomar nombre del producto (buscar en lista)
+        # tomar nombre del producto del dropdown (más seguro: buscar en lista)
         nombre_prod = None
         for p in productos:
             if int(p["IdProductosStock"]) == id_prod:
@@ -371,6 +374,7 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
 
         try:
             nuevo_stock = db_registrar_movimiento(tipo, id_prod, nombre_prod, c, d)
+            # limpiar
             txt_cantidad.value = ""
             txt_desc.value = ""
             page.update()
@@ -382,134 +386,6 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
             open_overlay(ft.AlertDialog(title=ft.Text("No se pudo registrar"), content=ft.Text(str(ex))))
 
     recargar_tabla()
-
-    # -----------------------------
-    # Sidebar animado (MISMO)
-    # -----------------------------
-    sidebar_state = {"collapsed": False}
-    nav_items_refs = []
-
-    title = ft.Text("Corallie Bubble", size=18, weight="bold", color="white")
-    subtitle = ft.Text("Punto de Venta", size=12, color="white70")
-
-    avatar = ft.Container(
-        width=44,
-        height=44,
-        border_radius=16,
-        bgcolor="#FFE0F0",
-        alignment=ft.alignment.center,
-        content=ft.Text((nombre[:1] or "U").upper(), weight="bold", color="#6C2BD9"),
-    )
-
-    user_name = ft.Text(
-        nombre,
-        color="white",
-        weight="bold",
-        size=13,
-        max_lines=1,
-        overflow=ft.TextOverflow.ELLIPSIS,
-    )
-    user_role = ft.Text("Empleado", size=11, color="white70")
-    user_info = ft.Column([user_name, user_role], spacing=1, expand=True)
-
-    user_header = ft.Container(
-        padding=12,
-        border_radius=18,
-        bgcolor="rgba(255,255,255,0.12)",
-        content=ft.Row([avatar, user_info], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-    )
-
-    def nav_item(icon, text, on_click):
-        icon_ctrl = ft.Icon(icon, color="white", size=22)
-        text_ctrl = ft.Text(text, color="white", size=13, weight="w600", visible=True)
-        nav_items_refs.append((icon_ctrl, text_ctrl))
-
-        return ft.Container(
-            height=44,
-            padding=ft.padding.symmetric(horizontal=10),
-            border_radius=16,
-            ink=True,
-            tooltip=text,
-            on_click=on_click,
-            content=ft.Row(
-                [icon_ctrl, text_ctrl],
-                spacing=10,
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            on_hover=lambda e: (
-                setattr(e.control, "bgcolor", "rgba(255,255,255,0.15)" if e.data == "true" else None),
-                e.control.update(),
-            ),
-        )
-
-    def apply_sidebar_state():
-        collapsed = sidebar_state["collapsed"]
-
-        sidebar.width = 76 if collapsed else 230
-        title.visible = not collapsed
-        subtitle.visible = not collapsed
-
-        user_info.visible = not collapsed
-        user_header.content = (
-            ft.Column([avatar], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-            if collapsed
-            else ft.Row([avatar, user_info], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        )
-
-        for _icon_ctrl, text_ctrl in nav_items_refs:
-            text_ctrl.visible = not collapsed
-
-        for item in nav_column.controls + [logout_btn]:
-            if isinstance(item.content, ft.Row):
-                item.content.alignment = ft.MainAxisAlignment.CENTER if collapsed else ft.MainAxisAlignment.START
-                item.padding = ft.padding.symmetric(horizontal=0 if collapsed else 10)
-
-        page.update()
-
-    def toggle_sidebar(e=None):
-        sidebar_state["collapsed"] = not sidebar_state["collapsed"]
-        apply_sidebar_state()
-
-    nav_column = ft.Column(
-        controls=[
-            nav_item(ft.icons.HOME, "Inicio", ir_inicio),
-            nav_item(ft.icons.INVENTORY_2, "Inventario", ir_inventario),
-            nav_item(ft.icons.SWAP_HORIZ, "Entradas y salidas", ir_movimientos),
-            nav_item(ft.icons.ACCOUNT_BALANCE_WALLET, "Caja chica", ir_caja_chica),
-            nav_item(ft.icons.ASSESSMENT, "Reportes", ir_reportes),
-        ],
-        spacing=8,
-    )
-
-    logout_btn = nav_item(ft.icons.LOGOUT, "Cerrar sesión", cerrar_sesion)
-
-    sidebar = ft.Container(
-        width=230,
-        bgcolor="#C86DD7",
-        padding=16,
-        animate=ft.animation.Animation(220, ft.AnimationCurve.EASE_OUT),
-        content=ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.IconButton(icon=ft.icons.MENU, icon_color="white", on_click=toggle_sidebar),
-                        ft.Container(expand=True, content=ft.Column([title, subtitle], spacing=0)),
-                    ],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Container(height=12),
-                user_header,
-                ft.Container(height=16),
-                nav_column,
-                ft.Container(expand=True),
-                logout_btn,
-            ],
-            spacing=6,
-        ),
-    )
-
-    apply_sidebar_state()
 
     # -----------------------------
     # Layout principal
@@ -587,4 +463,4 @@ def movimientos_view(page: ft.Page, nombre: str) -> ft.View:
         color="white",
     )
 
-    return ft.View("/movimientos", controls=[layout], appbar=appbar)
+    return ft.View(route="/movimientos", controls=[layout], appbar=appbar)

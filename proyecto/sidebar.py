@@ -46,6 +46,37 @@ def build_sidebar(
             dlg.open = True
             page.update()
 
+    def _store_get(key, default=None):
+        # Prefer memoria de sesión (sync)
+        try:
+            store = getattr(page, "_mem_store", None)
+            if isinstance(store, dict) and key in store:
+                return store.get(key)
+        except Exception:
+            pass
+
+        # Compat: client_storage viejo
+        try:
+            if hasattr(page, "client_storage"):
+                return page.client_storage.get(key)
+        except Exception:
+            pass
+
+        return default
+
+    def _store_remove(key):
+        try:
+            store = getattr(page, "_mem_store", None)
+            if isinstance(store, dict) and key in store:
+                store.pop(key, None)
+        except Exception:
+            pass
+        try:
+            if hasattr(page, "client_storage"):
+                page.client_storage.remove(key)
+        except Exception:
+            pass
+
     def _get(info_dict, keys, default="-"):
         if not info_dict:
             return default
@@ -112,7 +143,7 @@ def build_sidebar(
     # -----------------------------
     # Estado corte
     # -----------------------------
-    corte_id = page.client_storage.get("corte_id")
+    corte_id = _store_get("corte_id")
     corte_id_int = int(corte_id) if corte_id else None
 
     info = obtener_info_corte(corte_id_int) if corte_id_int else None
@@ -178,8 +209,8 @@ def build_sidebar(
                 pass
 
             try:
-                page.client_storage.remove("corte_id")
-                page.client_storage.remove("empleado")
+                _store_remove("corte_id")
+                _store_remove("empleado")
             except Exception:
                 pass
 
@@ -278,7 +309,7 @@ def build_sidebar(
                                 height=56,
                                 border_radius=18,
                                 bgcolor="#FFE0F0",
-                                alignment=ft.alignment.center,
+                                alignment=ft.Alignment.CENTER,
                                 content=ft.Text((nombre[:1] or "U").upper(), size=22, weight="bold"),
                             ),
                             ft.Column(
@@ -339,7 +370,7 @@ def build_sidebar(
         height=44,
         border_radius=16,
         bgcolor="#FFE0F0",
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
         content=avatar_txt,
     )
 
@@ -353,13 +384,13 @@ def build_sidebar(
     )
 
     user_menu = ft.PopupMenuButton(
-        icon=ft.icons.MORE_VERT,
+        icon=ft.Icons.MORE_HORIZ,
         icon_color="white",
         items=[
-            ft.PopupMenuItem(text="Ver perfil", on_click=ver_perfil),
-            ft.PopupMenuItem(text="Ajustes (próx.)"),
+            ft.PopupMenuItem(content=ft.Text("Ver perfil"), on_click=ver_perfil),
+            ft.PopupMenuItem(content=ft.Text("Ajustes (próx.)")),
             ft.PopupMenuItem(),
-            ft.PopupMenuItem(text="Cerrar sesión", on_click=confirmar_cierre),
+            ft.PopupMenuItem(content=ft.Text("Cerrar sesión"), on_click=confirmar_cierre),
         ],
     )
 
@@ -384,7 +415,7 @@ def build_sidebar(
         border_radius=18,
         bgcolor="rgba(255,255,255,0.12)",
         clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
         content=avatar,
     )
 
@@ -456,18 +487,18 @@ def build_sidebar(
 
     nav_column = ft.Column(
         [
-            nav_item(ft.icons.HOME, "Inicio", ir_inicio),
-            nav_item(ft.icons.INVENTORY_2, "Ver inventario", ir_inventario),
-            nav_item(ft.icons.SWAP_HORIZ, "Entradas y salidas", ir_movimientos),
-            nav_item(ft.icons.ACCOUNT_BALANCE_WALLET, "Caja chica", ir_caja_chica),
-            nav_item(ft.icons.ASSESSMENT, "Reportes", ir_reportes),
+            nav_item(ft.Icons.HOME, "Inicio", ir_inicio),
+            nav_item(ft.Icons.INVENTORY_2, "Ver inventario", ir_inventario),
+            nav_item(ft.Icons.SWAP_HORIZ, "Entradas y salidas", ir_movimientos),
+            nav_item(ft.Icons.ACCOUNT_BALANCE_WALLET, "Caja chica", ir_caja_chica),
+            nav_item(ft.Icons.ASSESSMENT, "Reportes", ir_reportes),
         ],
         spacing=6,
     )
 
     header_row = ft.Row(
         [
-            ft.IconButton(icon=ft.icons.MENU, icon_color="white", on_click=toggle_sidebar),
+            ft.IconButton(icon=ft.Icons.MENU, icon_color="white", on_click=toggle_sidebar),
             ft.Container(expand=True),
         ],
         alignment=ft.MainAxisAlignment.START,
@@ -491,7 +522,7 @@ def build_sidebar(
                 ft.Container(height=10),
                 nav_column,
                 ft.Container(expand=True),
-                nav_item(ft.icons.LOGOUT, "Cerrar sesión", confirmar_cierre),
+                nav_item(ft.Icons.LOGOUT, "Cerrar sesión", confirmar_cierre),
             ],
             spacing=6,
         ),

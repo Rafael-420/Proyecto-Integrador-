@@ -1,32 +1,16 @@
 import flet as ft
-from datetime import datetime
-from connector import get_connection
-from sidebar import build_sidebar
 
-
-# ------------------------------------------------------------
-# PARCHES COMPATIBILIDAD FLET (como en tu login/menu)
-# ------------------------------------------------------------
+# Compatibilidad íconos (Flet nuevo)
 if not hasattr(ft, "icons") and hasattr(ft, "Icons"):
     ft.icons = ft.Icons
 
-if not hasattr(ft, "animation"):
-    ft.animation = ft
-
-_original_container = ft.Container
-def SafeContainer(*args, **kwargs):
-    # Evita props que cambian entre versiones
-    kwargs.pop("elevation", None)
-    kwargs.pop("shadow", None)
-    kwargs.pop("blur", None)
-    return _original_container(*args, **kwargs)
-
-ft.Container = SafeContainer
+from datetime import datetime
+from connector import get_connection
 
 
 def inventario_view(page: ft.Page, nombre: str) -> ft.View:
     # -----------------------------
-    # Navegación base
+    # Navegación
     # -----------------------------
     def volver_pos(e=None):
         if len(page.views) > 1:
@@ -39,34 +23,6 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
         page.views.append(LoginView(page))
         page.go("/")
         page.update()
-
-    # ✅ NAVEGACIÓN A MÓDULOS (ANTES de crear nav_column)
-    def ir_inventario(e=None):
-        # ya estás aquí
-        page.go("/inventario")
-        page.update()
-
-    def ir_movimientos(e=None):
-        from movimientos import movimientos_view
-        page.views.append(movimientos_view(page, nombre))
-        page.go("/movimientos")
-        page.update()
-
-    def ir_caja_chica(e=None):
-        from caja_chica import caja_chica_view
-        page.views.append(caja_chica_view(page, nombre))
-        page.go("/caja_chica")
-        page.update()
-
-    def ir_reportes(e=None):
-        from generar_reportes import generar_reportes_view
-        page.views.append(generar_reportes_view(page, nombre))
-        page.go("/reportes")  # ✅ ruta consistente con generar_reportes.py
-        page.update()
-    
-    def ir_inicio(e=None):
-        volver_pos()
-
 
     # -----------------------------
     # Overlay helpers (compatibles)
@@ -86,11 +42,11 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             else:
                 dlg.open = False
                 page.update()
-        except Exception:
+        except:
             try:
                 dlg.open = False
                 page.update()
-            except Exception:
+            except:
                 pass
 
     def show_snack(texto: str):
@@ -107,12 +63,21 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
     # -----------------------------
     def normalizar_nombre(s: str) -> str:
         s = (s or "").strip()
-        return " ".join(s.split())
+        # colapsa espacios múltiples
+        s = " ".join(s.split())
+        return s
 
     def parse_fecha_caducidad(s: str) -> int:
+        """
+        Acepta:
+          - YYYYMMDD (8 dígitos)
+          - YYYY-MM-DD
+        Retorna int YYYYMMDD si es válido, si no lanza ValueError.
+        """
         raw = (s or "").strip()
         if not raw:
             raise ValueError("Fecha vacía")
+
         if "-" in raw:
             dt = datetime.strptime(raw, "%Y-%m-%d")
         else:
@@ -121,9 +86,45 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             dt = datetime.strptime(raw, "%Y%m%d")
         return int(dt.strftime("%Y%m%d"))
 
+    # -----------------------------
+    # Sidebar
+    # -----------------------------
+    def crear_boton_sidebar(texto: str, on_click):
+        btn = ft.Container(
+            padding=ft.padding.symmetric(vertical=10, horizontal=16),
+            border_radius=20,
+            content=ft.Text(texto, color="white", size=14, weight="w600"),
+            ink=True,
+            on_click=on_click,
+        )
+
+        def on_hover(e):
+            btn.bgcolor = "rgba(255,255,255,0.18)" if e.data == "true" else None
+            btn.update()
+
+        btn.on_hover = on_hover
+        return btn
+
+    sidebar = ft.Container(
+        width=220,
+        bgcolor="#C86DD7",
+        padding=20,
+        content=ft.Column(
+            [
+                ft.Text("Corallie Bubble", size=20, weight="bold", color="white"),
+                ft.Text("Punto de Venta", size=12, color="white70"),
+                ft.Container(height=20),
+                crear_boton_sidebar("Inicio", volver_pos),
+                crear_boton_sidebar("Ver inventario", lambda e: None),
+                ft.Container(expand=True),
+                crear_boton_sidebar("Cerrar sesión", cerrar_sesion),
+            ],
+            spacing=6,
+        ),
+    )
 
     # -----------------------------
-    # UI Inventario
+    # UI
     # -----------------------------
     txt_buscar = ft.TextField(label="Buscar", border_radius=12, width=320)
 
@@ -157,8 +158,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
         try:
             conn = get_connection()
             cur = conn.cursor(dictionary=True)
-            cur.execute(
-                """
+            cur.execute("""
                 SELECT
                     p.IdProductos,
                     p.Nombre,
@@ -170,16 +170,16 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
                     p.CorteCaja_idCorteCaja,
                     COALESCE(ps.Cantidad, 0) AS Cantidad
                 FROM productos p
-                LEFT JOIN productosstock ps ON ps.Nombre = p.Nombre
+                LEFT JOIN productosstock ps
+                    ON ps.Nombre = p.Nombre
                 ORDER BY p.Nombre ASC
-                """
-            )
+            """)
             return cur.fetchall() or []
         finally:
             try:
                 if cur: cur.close()
                 if conn: conn.close()
-            except Exception:
+            except:
                 pass
 
     def db_existe_nombre(nombre_norm: str, exclude_id: int | None = None) -> bool:
@@ -191,16 +191,14 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             if exclude_id is None:
                 cur.execute("SELECT COUNT(*) FROM productos WHERE LOWER(Nombre)=LOWER(%s)", (nombre_norm,))
             else:
-                cur.execute(
-                    "SELECT COUNT(*) FROM productos WHERE LOWER(Nombre)=LOWER(%s) AND IdProductos<>%s",
-                    (nombre_norm, exclude_id),
-                )
+                cur.execute("SELECT COUNT(*) FROM productos WHERE LOWER(Nombre)=LOWER(%s) AND IdProductos<>%s",
+                            (nombre_norm, exclude_id))
             return (cur.fetchone()[0] or 0) > 0
         finally:
             try:
                 if cur: cur.close()
                 if conn: conn.close()
-            except Exception:
+            except:
                 pass
 
     def db_crear_producto(nombre, precio, fecha_cad, descripcion, marca, unidad, corte_id=1):
@@ -210,32 +208,26 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             conn = get_connection()
             cur = conn.cursor()
 
-            cur.execute(
-                """
+            cur.execute("""
                 INSERT INTO productos (Nombre, Precio, FechaCaducidad, Descripcion, Marca, UnidadMedida, CorteCaja_idCorteCaja)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (nombre, precio, fecha_cad, descripcion, marca, unidad, corte_id),
-            )
+            """, (nombre, precio, fecha_cad, descripcion, marca, unidad, corte_id))
 
             # Crea stock si no existe (Cantidad=0)
             cur.execute("SELECT COUNT(*) FROM productosstock WHERE Nombre=%s", (nombre,))
             existe = (cur.fetchone()[0] or 0) > 0
             if not existe:
-                cur.execute(
-                    """
+                cur.execute("""
                     INSERT INTO productosstock (Nombre, Descripcion, Cantidad, CorteCaja_idCorteCaja)
                     VALUES (%s, %s, 0, %s)
-                    """,
-                    (nombre, (descripcion or "")[:35], corte_id),
-                )
+                """, (nombre, descripcion[:35], corte_id))
 
             conn.commit()
         finally:
             try:
                 if cur: cur.close()
                 if conn: conn.close()
-            except Exception:
+            except:
                 pass
 
     def db_editar_producto(id_prod, nombre, precio, fecha_cad, descripcion, marca, unidad):
@@ -251,30 +243,24 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
                 raise Exception("Producto no encontrado")
             nombre_anterior = row[0]
 
-            cur.execute(
-                """
+            cur.execute("""
                 UPDATE productos
                 SET Nombre=%s, Precio=%s, FechaCaducidad=%s, Descripcion=%s, Marca=%s, UnidadMedida=%s
                 WHERE IdProductos=%s
-                """,
-                (nombre, precio, fecha_cad, descripcion, marca, unidad, id_prod),
-            )
+            """, (nombre, precio, fecha_cad, descripcion, marca, unidad, id_prod))
 
-            cur.execute(
-                """
+            cur.execute("""
                 UPDATE productosstock
                 SET Nombre=%s, Descripcion=%s
                 WHERE Nombre=%s
-                """,
-                (nombre, (descripcion or "")[:35], nombre_anterior),
-            )
+            """, (nombre, descripcion[:35], nombre_anterior))
 
             conn.commit()
         finally:
             try:
                 if cur: cur.close()
                 if conn: conn.close()
-            except Exception:
+            except:
                 pass
 
     def db_eliminar_producto(id_prod):
@@ -297,7 +283,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             try:
                 if cur: cur.close()
                 if conn: conn.close()
-            except Exception:
+            except:
                 pass
 
     # -----------------------------
@@ -318,9 +304,9 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
         if q:
             lista = [
                 p for p in productos_cache
-                if q in str(p.get("Nombre", "")).lower()
-                or q in str(p.get("Descripcion", "")).lower()
-                or q in str(p.get("Marca", "")).lower()
+                if q in str(p["Nombre"]).lower()
+                or q in str(p["Descripcion"]).lower()
+                or q in str(p["Marca"]).lower()
             ]
         pintar_tabla(lista)
 
@@ -330,9 +316,8 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
         tabla.rows = []
 
         def link(texto, callback):
-            # compat: Colors puede variar; usamos string
             return ft.GestureDetector(
-                content=ft.Text(texto, color="#1565C0", weight="w600"),
+                content=ft.Text(texto, color=ft.Colors.BLUE, weight="w600"),
                 on_tap=callback,
                 mouse_cursor=ft.MouseCursor.CLICK,
             )
@@ -349,7 +334,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
         for p in lista:
             try:
                 cant = float(p.get("Cantidad", 0) or 0)
-            except Exception:
+            except:
                 cant = 0
 
             sin_stock = cant <= 0
@@ -364,7 +349,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
                         padding=ft.padding.symmetric(horizontal=8, vertical=4),
                         border_radius=12,
                         content=ft.Text("SIN STOCK", size=11, weight="bold"),
-                    ),
+                    )
                 ],
                 spacing=10,
             )
@@ -433,22 +418,23 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             if not n:
                 nombre_f.error_text = "Requerido"
                 ok = False
-            elif db_existe_nombre(n):
-                nombre_f.error_text = "Ya existe un producto con ese nombre"
-                ok = False
+            else:
+                if db_existe_nombre(n):
+                    nombre_f.error_text = "Ya existe un producto con ese nombre"
+                    ok = False
 
             try:
                 precio = float(pr)
                 if precio <= 0:
                     raise ValueError()
-            except Exception:
+            except:
                 precio_f.error_text = "Precio inválido (debe ser > 0)"
                 ok = False
                 precio = 0.0
 
             try:
                 fecha_cad = parse_fecha_caducidad(fc)
-            except Exception:
+            except:
                 cad_f.error_text = "Fecha inválida (YYYYMMDD o YYYY-MM-DD)"
                 ok = False
                 fecha_cad = 0
@@ -472,7 +458,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
         def guardar(ev):
             ok, n, precio, fecha_cad, d, m, u = validar()
             if not ok:
-                return
+                return  # no cierra si hay errores
             try:
                 db_crear_producto(n, precio, fecha_cad, d, m, u, corte_id=1)
                 close_dialog(dlg)
@@ -486,7 +472,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             ft.TextButton("Cancelar", on_click=cancelar),
             ft.ElevatedButton("Guardar", bgcolor="#C86DD7", color="white", on_click=guardar),
         ]
-        dlg.actions_alignment = "end"
+        dlg.actions_alignment = ft.MainAxisAlignment.END
         open_dialog(dlg)
 
     def abrir_dialogo_editar(prod):
@@ -514,22 +500,23 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             if not n:
                 nombre_f.error_text = "Requerido"
                 ok = False
-            elif db_existe_nombre(n, exclude_id=int(prod["IdProductos"])):
-                nombre_f.error_text = "Ya existe otro producto con ese nombre"
-                ok = False
+            else:
+                if db_existe_nombre(n, exclude_id=int(prod["IdProductos"])):
+                    nombre_f.error_text = "Ya existe otro producto con ese nombre"
+                    ok = False
 
             try:
                 precio = float(pr)
                 if precio <= 0:
                     raise ValueError()
-            except Exception:
+            except:
                 precio_f.error_text = "Precio inválido (debe ser > 0)"
                 ok = False
                 precio = 0.0
 
             try:
                 fecha_cad = parse_fecha_caducidad(fc)
-            except Exception:
+            except:
                 cad_f.error_text = "Fecha inválida (YYYYMMDD o YYYY-MM-DD)"
                 ok = False
                 fecha_cad = 0
@@ -567,7 +554,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             ft.TextButton("Cancelar", on_click=cancelar),
             ft.ElevatedButton("Guardar", bgcolor="#C86DD7", color="white", on_click=guardar),
         ]
-        dlg.actions_alignment = "end"
+        dlg.actions_alignment = ft.MainAxisAlignment.END
         open_dialog(dlg)
 
     def confirmar_eliminar(id_prod):
@@ -590,7 +577,7 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
             ft.TextButton("Cancelar", on_click=cancelar),
             ft.ElevatedButton("Eliminar", bgcolor="#E53935", color="white", on_click=eliminar),
         ]
-        dlg.actions_alignment = "end"
+        dlg.actions_alignment = ft.MainAxisAlignment.END
         open_dialog(dlg)
 
     # -----------------------------
@@ -606,17 +593,28 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
                 bgcolor="#C86DD7",
                 color="white",
                 on_click=abrir_dialogo_nuevo,
-                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=20), padding=18),
+                style=ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=20),
+                    padding=18,
+                ),
             ),
         ],
-        alignment="center",
+        alignment=ft.MainAxisAlignment.CENTER,
     )
 
     recargar()
 
+    # ✅ Tabla responsiva:
+    # - Scroll vertical: ListView
+    # - Scroll horizontal: Row(scroll="auto") envolviendo la tabla
     tabla_responsiva = ft.Row(
-        controls=[ft.Container(padding=6, content=tabla)],
-        scroll=ft.ScrollMode.AUTO,
+        controls=[
+            ft.Container(
+                padding=6,
+                content=tabla,
+            )
+        ],
+        scroll=ft.ScrollMode.AUTO,  # horizontal
     )
 
     main_content = ft.Container(
@@ -632,26 +630,17 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
                     bgcolor="white",
                     border_radius=18,
                     padding=12,
-                    content=ft.ListView(expand=True, controls=[tabla_responsiva]),
+                    content=ft.ListView(
+                        expand=True,
+                        controls=[tabla_responsiva],
+                    ),
                 ),
             ],
             expand=True,
         ),
     )
 
-    sidebar = build_sidebar(
-        page=page,
-        nombre=nombre,
-        ir_inicio=ir_inicio,
-        ir_inventario=ir_inventario,
-        ir_movimientos=ir_movimientos,
-        ir_caja_chica=ir_caja_chica,
-        ir_reportes=ir_reportes,
-        cerrar_sesion_real=cerrar_sesion,
-    )
-
     layout = ft.Row([sidebar, main_content], expand=True)
-
 
     appbar = ft.AppBar(
         title=ft.Text("Corallie Bubble - Punto de Venta"),
@@ -659,4 +648,4 @@ def inventario_view(page: ft.Page, nombre: str) -> ft.View:
         color="white",
     )
 
-    return ft.View("/inventario", controls=[layout], appbar=appbar)
+    return ft.View(route="/inventario", controls=[layout], appbar=appbar)

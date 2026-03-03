@@ -1,4 +1,9 @@
 import flet as ft
+
+# Compatibilidad íconos (Flet nuevo)
+if not hasattr(ft, "icons") and hasattr(ft, "Icons"):
+    ft.icons = ft.Icons
+
 from login import LoginView
 
 

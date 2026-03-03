@@ -1,24 +1,11 @@
 import flet as ft
-from datetime import datetime, date
-from connector import get_connection  # usa tu conexión actual
 
-
-# ------------------------------------------------------------
-# PARCHES COMPATIBILIDAD FLET
-# ------------------------------------------------------------
+# Compatibilidad íconos (Flet nuevo)
 if not hasattr(ft, "icons") and hasattr(ft, "Icons"):
     ft.icons = ft.Icons
 
-if not hasattr(ft, "animation"):
-    ft.animation = ft
-
-_original_container = ft.Container
-def SafeContainer(*args, **kwargs):
-    kwargs.pop("elevation", None)
-    kwargs.pop("shadow", None)
-    kwargs.pop("blur", None)
-    return _original_container(*args, **kwargs)
-ft.Container = SafeContainer
+from datetime import datetime, date
+from connector import get_connection  # usa tu conexión actual
 
 
 def caja_chica_view(page: ft.Page, nombre: str):
@@ -41,56 +28,11 @@ def caja_chica_view(page: ft.Page, nombre: str):
             return None
 
     def show_snack(msg: str, ok: bool = False):
-        sb = ft.SnackBar(
+        page.snack_bar = ft.SnackBar(
             ft.Text(msg),
             bgcolor="#2e7d32" if ok else "#c62828",
         )
-        if hasattr(page, "open"):
-            page.open(sb)
-        else:
-            page.snack_bar = sb
-            sb.open = True
-            page.update()
-
-    # -----------------------
-    # Navegación (para sidebar)
-    # -----------------------
-    def volver_pos(e=None):
-        if len(page.views) > 1:
-            page.views.pop()
-        page.update()
-
-    def cerrar_sesion(e):
-        from login import LoginView
-        page.views.clear()
-        page.views.append(LoginView(page))
-        page.go("/")
-        page.update()
-
-    def ir_inicio(e=None):
-        # regreso seguro
-        volver_pos()
-
-    def ir_inventario(e=None):
-        from inventario import inventario_view
-        page.views.append(inventario_view(page, nombre))
-        page.go("/inventario")
-        page.update()
-
-    def ir_movimientos(e=None):
-        from movimientos import movimientos_view
-        page.views.append(movimientos_view(page, nombre))
-        page.go("/movimientos")
-        page.update()
-
-    def ir_caja_chica(e=None):
-        page.go("/caja_chica")
-        page.update()
-
-    def ir_reportes(e=None):
-        from generar_reportes import generar_reportes_view
-        page.views.append(generar_reportes_view(page, nombre))
-        page.go("/reportes")
+        page.snack_bar.open = True
         page.update()
 
     # -----------------------
@@ -157,7 +99,7 @@ def caja_chica_view(page: ft.Page, nombre: str):
                         ft.Container(expand=True),
                         chk_hoy,
                         ft.IconButton(
-                            icon=ft.icons.REFRESH,
+                            icon=ft.Icons.REFRESH,
                             tooltip="Actualizar",
                             on_click=lambda e: load_movimientos(),
                         ),
@@ -208,7 +150,7 @@ def caja_chica_view(page: ft.Page, nombre: str):
                         ft.Container(expand=True),
                         chk_pedidos_hoy,
                         ft.IconButton(
-                            icon=ft.icons.REFRESH,
+                            icon=ft.Icons.REFRESH,
                             tooltip="Actualizar pedidos",
                             on_click=lambda e: load_pedidos_bebidas(),
                         ),
@@ -233,6 +175,8 @@ def caja_chica_view(page: ft.Page, nombre: str):
         ),
     )
 
+    # Heurística para "BEBIDAS" sin cambiar BD:
+    # Si en tu sistema ya tienes un campo categoría, dímelo y lo conecto a eso.
     BEBIDA_KEYWORDS = (
         "bebida", "café", "cafe", "refresco", "agua", "té", "te", "jug", "soda",
         "malteada", "frapp", "limonada", "naranja", "cerveza"
@@ -273,6 +217,7 @@ def caja_chica_view(page: ft.Page, nombre: str):
         page.update()
 
     def confirmar_cobro():
+        # Validaciones de ingreso de dinero
         recibido = to_float(txt_recibido.value)
         total = float(pedido_actual.get("total") or 0)
 
@@ -292,11 +237,13 @@ def caja_chica_view(page: ft.Page, nombre: str):
             show_snack("El efectivo recibido no puede ser menor al total.", ok=False)
             return
 
+        # Registrar cobro: marcar pedido PAGADO + insertar ingreso en caja chica
         conn = None
         try:
             conn = get_connection()
             cur = conn.cursor(dictionary=True)
 
+            # Revalidar estatus para evitar doble cobro
             cur.execute(
                 "SELECT Estatus, Producto, Total FROM generarpedido WHERE IdGenerarPedido = %s",
                 (pedido_actual["id"],),
@@ -313,6 +260,7 @@ def caja_chica_view(page: ft.Page, nombre: str):
                 load_pedidos_bebidas()
                 return
 
+            # Marcar pagado
             cur2 = conn.cursor()
             cur2.execute(
                 "UPDATE generarpedido SET Estatus = 'Pagado' WHERE IdGenerarPedido = %s",
@@ -336,6 +284,7 @@ def caja_chica_view(page: ft.Page, nombre: str):
             show_snack("✅ Cobro registrado en Caja Chica.", ok=True)
             cerrar_dialogo()
 
+            # refrescar ambos
             load_movimientos()
             load_pedidos_bebidas()
 
@@ -457,6 +406,7 @@ def caja_chica_view(page: ft.Page, nombre: str):
         monto_raw = (txt_monto.value or "").strip().replace(",", "")
         desc = (txt_desc.value or "").strip()
 
+        # Validaciones (más estrictas para ingreso/egreso manual)
         if not tipo or not monto_raw or not desc:
             show_snack("Completa Tipo, Monto y Descripción.", ok=False)
             return
@@ -534,6 +484,8 @@ def caja_chica_view(page: ft.Page, nombre: str):
             data = cur.fetchall()
 
             pedidos_table.rows.clear()
+
+            # Filtrar bebidas por heurística
             data_bebidas = [r for r in data if parece_bebida(r.get("Producto", ""))]
 
             for r in data_bebidas:
@@ -588,11 +540,12 @@ def caja_chica_view(page: ft.Page, nombre: str):
             except Exception:
                 pass
 
+    # Recargar si cambia filtro
     chk_hoy.on_change = lambda e: load_movimientos()
     chk_pedidos_hoy.on_change = lambda e: load_pedidos_bebidas()
 
     # -----------------------
-    # Layout (contenido)
+    # Layout
     # -----------------------
     header_card = ft.Container(
         padding=20,
@@ -602,8 +555,16 @@ def caja_chica_view(page: ft.Page, nombre: str):
             spacing=6,
             controls=[
                 ft.Text("Caja Chica", size=26, weight="bold", color="#222222"),
-                ft.Text("Controla los movimientos de efectivo del día.", size=14, color="#666666"),
-                ft.Text(f"Empleado: {nombre}", size=12, color="#888888"),
+                ft.Text(
+                    "Controla los movimientos de efectivo del día.",
+                    size=14,
+                    color="#666666",
+                ),
+                ft.Text(
+                    f"Empleado: {nombre}",
+                    size=12,
+                    color="#888888",
+                ),
             ],
         ),
     )
@@ -650,137 +611,6 @@ def caja_chica_view(page: ft.Page, nombre: str):
         ),
     )
 
-    # -----------------------------
-    # Sidebar animado (mismo)
-    # -----------------------------
-    sidebar_state = {"collapsed": False}
-    nav_items_refs = []
-
-    title = ft.Text("Corallie Bubble", size=18, weight="bold", color="white")
-    subtitle = ft.Text("Punto de Venta", size=12, color="white70")
-
-    avatar = ft.Container(
-        width=44,
-        height=44,
-        border_radius=16,
-        bgcolor="#FFE0F0",
-        alignment=ft.alignment.center,
-        content=ft.Text((nombre[:1] or "U").upper(), weight="bold", color="#6C2BD9"),
-    )
-
-    user_name = ft.Text(
-        nombre,
-        color="white",
-        weight="bold",
-        size=13,
-        max_lines=1,
-        overflow=ft.TextOverflow.ELLIPSIS,
-    )
-    user_role = ft.Text("Empleado", size=11, color="white70")
-    user_info = ft.Column([user_name, user_role], spacing=1, expand=True)
-
-    user_header = ft.Container(
-        padding=12,
-        border_radius=18,
-        bgcolor="rgba(255,255,255,0.12)",
-        content=ft.Row([avatar, user_info], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-    )
-
-    def nav_item(icon, text, on_click):
-        icon_ctrl = ft.Icon(icon, color="white", size=22)
-        text_ctrl = ft.Text(text, color="white", size=13, weight="w600", visible=True)
-        nav_items_refs.append((icon_ctrl, text_ctrl))
-
-        return ft.Container(
-            height=44,
-            padding=ft.padding.symmetric(horizontal=10),
-            border_radius=16,
-            ink=True,
-            tooltip=text,
-            on_click=on_click,
-            content=ft.Row(
-                [icon_ctrl, text_ctrl],
-                spacing=10,
-                alignment=ft.MainAxisAlignment.START,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            on_hover=lambda e: (
-                setattr(e.control, "bgcolor", "rgba(255,255,255,0.15)" if e.data == "true" else None),
-                e.control.update(),
-            ),
-        )
-
-    def apply_sidebar_state():
-        collapsed = sidebar_state["collapsed"]
-
-        sidebar.width = 76 if collapsed else 230
-        title.visible = not collapsed
-        subtitle.visible = not collapsed
-
-        user_info.visible = not collapsed
-        user_header.content = (
-            ft.Column([avatar], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-            if collapsed
-            else ft.Row([avatar, user_info], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        )
-
-        for _icon_ctrl, text_ctrl in nav_items_refs:
-            text_ctrl.visible = not collapsed
-
-        for item in nav_column.controls + [logout_btn]:
-            if isinstance(item.content, ft.Row):
-                item.content.alignment = ft.MainAxisAlignment.CENTER if collapsed else ft.MainAxisAlignment.START
-                item.padding = ft.padding.symmetric(horizontal=0 if collapsed else 10)
-
-        page.update()
-
-    def toggle_sidebar(e=None):
-        sidebar_state["collapsed"] = not sidebar_state["collapsed"]
-        apply_sidebar_state()
-
-    nav_column = ft.Column(
-        controls=[
-            nav_item(ft.icons.HOME, "Inicio", ir_inicio),
-            nav_item(ft.icons.INVENTORY_2, "Inventario", ir_inventario),
-            nav_item(ft.icons.SWAP_HORIZ, "Entradas y salidas", ir_movimientos),
-            nav_item(ft.icons.ACCOUNT_BALANCE_WALLET, "Caja chica", ir_caja_chica),
-            nav_item(ft.icons.ASSESSMENT, "Reportes", ir_reportes),
-        ],
-        spacing=8,
-    )
-
-    logout_btn = nav_item(ft.icons.LOGOUT, "Cerrar sesión", cerrar_sesion)
-
-    sidebar = ft.Container(
-        width=230,
-        bgcolor="#C86DD7",
-        padding=16,
-        animate=ft.animation.Animation(220, ft.AnimationCurve.EASE_OUT),
-        content=ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.IconButton(icon=ft.icons.MENU, icon_color="white", on_click=toggle_sidebar),
-                        ft.Container(expand=True, content=ft.Column([title, subtitle], spacing=0)),
-                    ],
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                ),
-                ft.Container(height=12),
-                user_header,
-                ft.Container(height=16),
-                nav_column,
-                ft.Container(expand=True),
-                logout_btn,
-            ],
-            spacing=6,
-        ),
-    )
-
-    apply_sidebar_state()
-
-    # -----------------------------
-    # Content principal (dentro layout)
-    # -----------------------------
     content = ft.Container(
         expand=True,
         bgcolor="#F9F6FB",
@@ -789,7 +619,19 @@ def caja_chica_view(page: ft.Page, nombre: str):
             expand=True,
             spacing=16,
             controls=[
+                ft.Row(
+                    controls=[
+                        ft.IconButton(
+                            icon=ft.Icons.ARROW_BACK,
+                            tooltip="Regresar",
+                            on_click=lambda e: (page.views.pop(), page.update()),
+                        ),
+                        ft.Text(""),
+                    ]
+                ),
                 header_card,
+
+                # 3 columnas: (form) (movimientos) (cobro pedidos)
                 ft.Row(
                     expand=True,
                     controls=[
@@ -802,16 +644,8 @@ def caja_chica_view(page: ft.Page, nombre: str):
         ),
     )
 
-    # Cargar al entrar
+    # cargar al entrar
     load_movimientos()
     load_pedidos_bebidas()
 
-    layout = ft.Row([sidebar, content], expand=True)
-
-    appbar = ft.AppBar(
-        title=ft.Text("Corallie Bubble - Punto de Venta"),
-        bgcolor="#C86DD7",
-        color="white",
-    )
-
-    return ft.View("/caja_chica", controls=[layout], appbar=appbar)
+    return ft.View(route="/caja_chica", controls=[content])
