@@ -170,7 +170,7 @@ def RegistroView(page: ft.Page, tipo: str):
     contenido = ft.Container(
         expand=True,
         bgcolor="#F9F6FB",
-        alignment=ft.Alignment.center,
+        alignment=ft.Alignment(0, 0),
         content=ft.Column(
             [
                 ft.Text("Corallie Bubble", size=26, weight="bold", color="#C86DD7"),
@@ -192,7 +192,7 @@ def RegistroView(page: ft.Page, tipo: str):
                 lbl_msg,
             ],
             spacing=15,
-            horizontal_alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             width=400,
         ),
     )

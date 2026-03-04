@@ -16,9 +16,8 @@ if not hasattr(ft, "animation"):
     ft.animation = ft
 
 # Alignment: evita usar ft.Alignment.CENTER (no existe en 0.81)
-ALIGN_CENTER = getattr(getattr(ft, "alignment", None), "center", None) or getattr(ft.Alignment, "CENTER", None)
-ALIGN_TOP_CENTER = getattr(getattr(ft, "alignment", None), "top_center", None) or getattr(ft.Alignment, "TOP_CENTER", None)
-
+ALIGN_CENTER = ft.Alignment(0, 0)
+ALIGN_TOP_CENTER = ft.Alignment(0, -1)
 
 def _icon(name: str, fallback: str):
     """Obtiene un icono de forma compatible entre versiones (ft.icons.* o string)."""
@@ -85,6 +84,16 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
 
     cliente_id = cliente_id or 1
     MESA_FIJA = 1  # tu BD requiere NumeroMesa
+    
+    # ------------------------------------------------------------
+    # CERRAR SESIÓN
+    # ------------------------------------------------------------
+    def cerrar_sesion(e):
+        page.views.clear()
+        from login import LoginView
+        page.views.append(LoginView(page))
+        page.go("/")
+        page.update()
 
     # ------------------------------------------------------------
     # MENÚ FIJO (no BD)
@@ -232,14 +241,11 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
     def close_dialog(dlg: ft.AlertDialog):
         dlg.open = False
         page.update()
-
+        
     def open_dialog(dlg: ft.AlertDialog):
-        if hasattr(page, "open"):
-            page.open(dlg)
-        else:
-            page.dialog = dlg
-            dlg.open = True
-            page.update()
+        page.dialog = dlg
+        dlg.open = True
+        page.update()
 
     def fancy_chip(text: str, bgcolor: str):
         return ft.Container(
@@ -274,7 +280,25 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                     spacing=1,
                     expand=True,
                 ),
-                _iconbtn("SHOPPING_CART", "🛒", icon_color="#6C2BD9", tooltip="Carrito", on_click=lambda e: set_tab("carrito")),
+                ft.Row(
+                    [
+                        _iconbtn(
+                            "SHOPPING_CART",
+                            "🛒",
+                            icon_color="#6C2BD9",
+                            tooltip="Carrito",
+                            on_click=lambda e: set_tab("carrito"),
+                        ),
+                        _iconbtn(
+                            "LOGOUT",
+                            "🚪",
+                            icon_color="#e74c3c",
+                            tooltip="Cerrar sesión",
+                            on_click=cerrar_sesion,
+                        ),
+                    ],
+                    spacing=6,
+                ),
             ],
             spacing=12,
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -545,11 +569,10 @@ def menu_interactivo_view(page: ft.Page, nombre: str, cliente_id: int | None = N
                 ft.TextButton("Cancelar", on_click=lambda e: close_dialog(prepare_dlg)),
                 ft.ElevatedButton(
                     "Agregar",
-                    icon=_icon("ADD_SHOPPING_CART_OUTLINED", "add_shopping_cart"),
                     bgcolor="#C86DD7",
                     color="white",
                     on_click=add_confirm,
-                ),
+                )
             ],
         )
 
